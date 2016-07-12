@@ -1,10 +1,21 @@
 doctype html
 html(lang="en")
   head
+    meta(charset='utf-8')
     title Typewriter Speak
+    meta(name='viewport', content='initial-scale=1, maximum-scale=1, user-scalable=no, minimal-ui')
+    meta(name='apple-mobile-web-app-capable', content='yes')
+    meta(name='apple-mobile-web-app-status-bar-style', content='black')
+    link(rel='stylesheet', href='ratchet.min.css')
+
+    script(src='ratchet.min.js')
   body
-    h1 Hello World
-    p Ninja Stuff
-    button#the_button Start
+    header.bar.bar-nav
+      //a.icon.icon-gear.pull-right(href='#settingsModal')
+      h1.title Typewriter Speak
+    .content
+      form
+        input#speakme(type='text', placeholder='Type Something...', value='')
+        button#the_button.btn.btn-negative.btn-block Speak!
     script(src="fsk.js")
 

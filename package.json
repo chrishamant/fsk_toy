@@ -2,7 +2,7 @@
   "name": "fsk_baudot",
   "version": "0.0.1",
   "description": "Naive FSK implementation that can generate tones of Baudot code for input into a teletype",
-  "main": "index.js",
+  "main": "fsk.js",
   "scripts": {},
   "keywords": [
     "fsk",
@@ -11,5 +11,9 @@
     "teletype"
   ],
   "author": "Chris Hamant",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "jade": "^1.11.0",
+    "serve": "^1.4.0"
+  }
 }

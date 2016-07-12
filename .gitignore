@@ -1,2 +1,5 @@
 scratch.js
 learn
+node_modules
+build
+.DS_Store

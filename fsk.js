@@ -1,13 +1,5 @@
 var outputContext = null
 
-if (typeof AudioContext !== "undefined") {
-    outputContext  = new AudioContext()
-} else if (typeof webkitAudioContext !== "undefined") {
-    outputContext  = new webkitAudioContext()
-} else {
-    console.log("AudioContext not supported")
-}
-
 var MARK = 2125 //
 var OFFSET = 425
 var SPACE = MARK + OFFSET
@@ -110,12 +102,29 @@ function fadeOut(stop,ctx){
     return gain
 }
 
+
+
 function kickOFF(){
+
+    if (typeof AudioContext !== "undefined") {
+        outputContext  = new AudioContext()
+    } else if (typeof webkitAudioContext !== "undefined") {
+        outputContext  = new webkitAudioContext()
+    } else {
+        console.log("AudioContext not supported")
+    }
+
+    var buffer = outputContext.createBuffer(1, 1, 22050);
+    var source = outputContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(outputContext.destination);
+    source.start(0);
+
     //baud expected in (chars/sec) -> #time for one char (in ms) (upper limit)
     //var baseTime = Math.ceil(1000/BAUD_RATE)
     var baseTime = 1000/BAUD_RATE
 
-    var str = "aaaaaaaaaaaaaaaaa"
+    var str = document.getElementById("speakme").value || "aaaaaaaa"
 
     var seqs = str.split('').map(sequenceForChar).reduce(function(arr,item){
       if(item){arr.push(item)}; return arr
@@ -126,8 +135,16 @@ function kickOFF(){
     var length = (seqs.length * 6 * baseTime + (baseTime * 1.5 * seqs.length))/1000 //ms->seconds
     var carrier_length = 5 //seconds
 
-    var offline_audio = new OfflineAudioContext(1, (SAMPLE_RATE * length) + (carrier_length * SAMPLE_RATE) ,SAMPLE_RATE)
+    
+    var offline_audio
 
+    if (typeof OfflineAudioContext !== "undefined") {
+        offline_audio = new OfflineAudioContext(1, (SAMPLE_RATE * length) + (carrier_length * SAMPLE_RATE) ,SAMPLE_RATE)
+    } else if (typeof webkitOfflineAudioContext !== "undefined") {
+        offline_audio = new webkitOfflineAudioContext(1, (SAMPLE_RATE * length) + (carrier_length * SAMPLE_RATE) ,SAMPLE_RATE)
+    } else {
+        console.log("Offline Audio not supported")
+    }
 
     var current_position = carrier_length
 
@@ -160,23 +177,20 @@ function kickOFF(){
     //TODO fill with NULLS
 
 
-
-    offline_audio.startRendering().then(function(renderedBuffer) {
+    offline_audio.startRendering()
+    
+    offline_audio.oncomplete = function(e) {
         var song = outputContext.createBufferSource()
-        song.buffer = renderedBuffer
+        song.buffer = e.renderedBuffer
         song.connect(outputContext.destination)
         song.start()
-    })
+        console.dir(song)
+    }
+
 }
 
-window.addEventListener('touchstart', function() {
-  alert("tap")
+document.getElementById("the_button").addEventListener("click", function(event){
+  event.preventDefault();
   kickOFF()
-
-}, false);
-
-document.getElementById("the_button").addEventListener("click", function(){
-
-  alert("tap")
-  kickOFF()
+  return false
 });
