@@ -1,28 +1,5 @@
-var outputContext = null
-
-var MARK = 2125 //
-var OFFSET = 425
-var SPACE = MARK + OFFSET
-var BAUD_RATE = 45.45 //characters per second
-var INVERT = false
-var SAMPLE_RATE = 44100
-
-function sequenceForChar(_char){
-
-    var bits = baudot[_char.toLowerCase()]
-
-    //sanity check
-    if(/^(1|0){5}$/.test(bits)){
-        return bits.split('').map(function(i){
-          return i == '1' ? MARK : SPACE
-        })
-    }else{
-        return null
-    }
-}
-
 var baudot = {
-  "":  "00000",
+  "" : "00000",
   " ": "00100",
   "q": "10111",
   "w": "10011",
@@ -50,8 +27,6 @@ var baudot = {
   "b": "11001",
   "n": "01100",
   "m": "11100",
-  "\n": "01000",
-  "\r": "00010",
   "1": "10111",
   "2": "10011",
   "3": "00001",
@@ -79,32 +54,57 @@ var baudot = {
   "_figure_shift": "11011",
   "_letter_shift": "11111"
 }
-function createOscillator(freq,start,stop,ctx){
 
-    var osc = ctx.createOscillator()
-    osc.type = 'sine'
-    osc.frequency.value = freq
-    osc.start(start)
-    osc.stop(stop)
-    osc.connect(ctx.destination)
+var outputContext = null
 
-    return osc
+var MARK = 2125 //
+var OFFSET = 425
+var SPACE = MARK + OFFSET
+var BAUD_RATE = 45.45 //characters per second
+var INVERT = false
+var SAMPLE_RATE = 44100
+
+var SAMPLES_PER_BIT = Math.ceil(SAMPLE_RATE/ BAUD_RATE)
+
+var dataURI = ""
+
+function sequenceForChar(_char){
+
+    var bits = baudot[_char.toLowerCase()]
+
+    //sanity check
+    if(/^(1|0){5}$/.test(bits)){
+        return bits.split('').map(function(i){
+          return i == '1' ? MARK : SPACE
+        })
+    }else{
+        return null
+    }
 }
 
-function fadeOut(stop,ctx){
-    var DECAY = 0.0001
-
-    var gain = ctx.createGain()
-    gain.gain.value = 1.0
-    gain.gain.setTargetAtTime(0, stop-0.002, DECAY)
-    gain.connect(ctx.destination)
-
-    return gain
+//iOS 9 is silly and must initialize the audio system to play properly
+// this just generates a "nothing" output to ensure system is started before trying to output real tones
+function initAudio(){
+    var initbuffer = outputContext.createBuffer(1, 1, 22050);
+    var source = outputContext.createBufferSource();
+    source.buffer = initbuffer;
+    source.connect(outputContext.destination);
+    source.start(0);
 }
 
+function chr8() {
+    return Array.prototype.map.call(arguments, function(a){
+        //truncate to 8 bits
+        return String.fromCharCode( a & 0xff)
+    }).join('');
+}
+function chr32() {
+    return Array.prototype.map.call(arguments, function(a){
+        return String.fromCharCode(a&0xff, (a>>8)&0xff,(a>>16)&0xff, (a>>24)&0xff);
+    }).join('');
+}
 
-
-function kickOFF(){
+function generate(){
 
     if (typeof AudioContext !== "undefined") {
         outputContext  = new AudioContext()
@@ -112,17 +112,10 @@ function kickOFF(){
         outputContext  = new webkitAudioContext()
     } else {
         console.log("AudioContext not supported")
+        return
     }
 
-    var buffer = outputContext.createBuffer(1, 1, 22050);
-    var source = outputContext.createBufferSource();
-    source.buffer = buffer;
-    source.connect(outputContext.destination);
-    source.start(0);
-
-    //baud expected in (chars/sec) -> #time for one char (in ms) (upper limit)
-    //var baseTime = Math.ceil(1000/BAUD_RATE)
-    var baseTime = 1000/BAUD_RATE
+    initAudio()
 
     var str = document.getElementById("speakme").value || "aaaaaaaa"
 
@@ -130,67 +123,71 @@ function kickOFF(){
       if(item){arr.push(item)}; return arr
     },[])
 
-    //length in seconds (from ms)
-    //7.5 bits per char
-    var length = (seqs.length * 6 * baseTime + (baseTime * 1.5 * seqs.length))/1000 //ms->seconds
-    var carrier_length = 5 //seconds
+    //TODO PREPEND SOME NULLS AND follow with some nulls/spaces closed by bell
 
-    
-    var offline_audio
+    //in "sample frames"
+    var length = seqs.length * 7.5 * SAMPLES_PER_BIT
 
-    if (typeof OfflineAudioContext !== "undefined") {
-        offline_audio = new OfflineAudioContext(1, (SAMPLE_RATE * length) + (carrier_length * SAMPLE_RATE) ,SAMPLE_RATE)
-    } else if (typeof webkitOfflineAudioContext !== "undefined") {
-        offline_audio = new webkitOfflineAudioContext(1, (SAMPLE_RATE * length) + (carrier_length * SAMPLE_RATE) ,SAMPLE_RATE)
-    } else {
-        console.log("Offline Audio not supported")
+    var outputBuffer = outputContext.createBuffer(1, length, SAMPLE_RATE);
+    var channel = outputBuffer.getChannelData(0)
+    var bufferTime = 0
+
+    var wave_data = "RIFF" + chr32(length+36) + "WAVE" +
+        "fmt " + chr32(16, 0x00010001, SAMPLE_RATE, SAMPLE_RATE, 0x00080001) +
+        "data" + chr32(length);
+
+    var lastSample = 0
+
+    function writeBit(freq){
+        for( var i = 0; i< SAMPLES_PER_BIT; i++){
+            //set 32bit float
+            var sample = 128 + 127 * Math.sin((2 * Math.PI) * (i / SAMPLE_RATE) * freq);
+
+            var raw_s = sample
+
+            //var POPPING_THRESHOLD = 45
+            //if (Math.abs(sample - lastSample) > POPPING_THRESHOLD){
+            //    sample = sample / 2 //reduce value by 1/3 to more gradually approach next sample
+            //}
+
+            wave_data += chr8(sample)
+            channel[bufferTime] = sample
+            lastSample = sample
+            bufferTime++
+        }
     }
-
-    var current_position = carrier_length
-
-    var osc = offline_audio.createOscillator()
-    osc.type = 'sine'
-    osc.frequency.value = MARK
-    osc.start(0)
-    osc.connect(offline_audio.destination)
-
-    var count = 0
-    baseTimeSec = baseTime / 1000
-
-    //TODO prepend with NULLS
 
     seqs.forEach(function(char){
         //start bit
-        osc.frequency.setTargetAtTime(MARK,current_position + baseTimeSec, 0.000001)
+        writeBit(MARK)
 
         char.forEach(function(freq){
-            osc.frequency.setTargetAtTime(freq,current_position + baseTimeSec, 0.000001)
-            current_position += baseTimeSec
+            writeBit(freq)
         })
 
-        osc.frequency.setTargetAtTime(SPACE,current_position + (baseTimeSec * 1.5), 0.000001)
-        current_position += (baseTimeSec*1.5)
+        //stop bit (1.5 normal length)
+        for( var i = 0; i< Math.floor(SAMPLES_PER_BIT * 1.5); i++){
+            //set 32bit float
+            var sample = 128 + 127 * Math.sin((2 * Math.PI) * (i / SAMPLE_RATE) * SPACE);
+            channel[bufferTime] = sample
+            wave_data += chr8(sample)
+            bufferTime++
+        }
     })
 
-    osc.frequency.setTargetAtTime(MARK,current_position, 0.000001)
 
-    //TODO fill with NULLS
+    var song = outputContext.createBufferSource()
+    song.buffer = outputBuffer
+    song.connect(outputContext.destination)
+    song.start()
 
+    dataURI = "data:audio/wav;base64," + escape(btoa(wave_data))
 
-    offline_audio.startRendering()
-    
-    offline_audio.oncomplete = function(e) {
-        var song = outputContext.createBufferSource()
-        song.buffer = e.renderedBuffer
-        song.connect(outputContext.destination)
-        song.start()
-        console.dir(song)
-    }
-
+    //window.open(dataURI)
 }
 
 document.getElementById("the_button").addEventListener("click", function(event){
-  event.preventDefault();
-  kickOFF()
+  event.preventDefault()
+  generate()
   return false
 });
