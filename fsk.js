@@ -52,17 +52,19 @@ var baudot = {
   ",": "01100",
   ".": "11100",
   "_figure_shift": "11011",
-  "_letter_shift": "11111"
+  "_letter_shift": "11111",
+  "_bell" : "00101",
+  "_cr" : "01000"
 }
 
 var outputContext = null
 
 var MARK = 2125 //
-var OFFSET = 425
-var SPACE = MARK + OFFSET
+var SPACE = 425
+//var MARK = 2125 //
+//var SPACE = 425
 var BAUD_RATE = 45.45 //characters per second
-var INVERT = false
-var SAMPLE_RATE = 44100
+var SAMPLE_RATE = 48000
 
 var SAMPLES_PER_BIT = Math.ceil(SAMPLE_RATE/ BAUD_RATE)
 
@@ -75,7 +77,7 @@ function sequenceForChar(_char){
     //sanity check
     if(/^(1|0){5}$/.test(bits)){
         return bits.split('').map(function(i){
-          return i == '1' ? MARK : SPACE
+          return i == '1' ? SPACE: MARK 
         })
     }else{
         return null
@@ -98,6 +100,7 @@ function chr8() {
         return String.fromCharCode( a & 0xff)
     }).join('');
 }
+
 function chr32() {
     return Array.prototype.map.call(arguments, function(a){
         return String.fromCharCode(a&0xff, (a>>8)&0xff,(a>>16)&0xff, (a>>24)&0xff);
@@ -123,10 +126,24 @@ function generate(){
       if(item){arr.push(item)}; return arr
     },[])
 
+    seqs.unshift(sequenceForChar("_letter_shift"))
+    seqs.push(sequenceForChar(""))
+    seqs.push(sequenceForChar(""))
+    seqs.push(sequenceForChar(""))
+    seqs.push(sequenceForChar("_figure_shift"))
+    seqs.push(sequenceForChar("_bell"))
+    seqs.push(sequenceForChar("_letter_shift"))
+    seqs.push(sequenceForChar("_CR"))
+
     //TODO PREPEND SOME NULLS AND follow with some nulls/spaces closed by bell
 
     //in "sample frames"
-    var length = seqs.length * 7.5 * SAMPLES_PER_BIT
+    var length = Math.ceil(seqs.length * 7.5 * SAMPLES_PER_BIT)
+
+    var carrierStart =  SAMPLE_RATE * 2
+    var carrierEnding = SAMPLE_RATE * 2
+
+    length = length + carrierStart + carrierEnding
 
     var outputBuffer = outputContext.createBuffer(1, length, SAMPLE_RATE);
     var channel = outputBuffer.getChannelData(0)
@@ -136,54 +153,70 @@ function generate(){
         "fmt " + chr32(16, 0x00010001, SAMPLE_RATE, SAMPLE_RATE, 0x00080001) +
         "data" + chr32(length);
 
-    var lastSample = 0
-
     function writeBit(freq){
-        for( var i = 0; i< SAMPLES_PER_BIT; i++){
+        for( var i = 0; i < SAMPLES_PER_BIT; i++){
             //set 32bit float
-            var sample = 128 + 127 * Math.sin((2 * Math.PI) * (i / SAMPLE_RATE) * freq);
-
-            var raw_s = sample
-
-            //var POPPING_THRESHOLD = 45
-            //if (Math.abs(sample - lastSample) > POPPING_THRESHOLD){
-            //    sample = sample / 2 //reduce value by 1/3 to more gradually approach next sample
-            //}
+            var sample = 128 + 127 * Math.sin((2 * Math.PI) * (bufferTime / SAMPLE_RATE) * freq);
 
             wave_data += chr8(sample)
             channel[bufferTime] = sample
-            lastSample = sample
             bufferTime++
         }
     }
 
-    seqs.forEach(function(char){
-        //start bit
-        writeBit(MARK)
-
-        char.forEach(function(freq){
-            writeBit(freq)
-        })
-
-        //stop bit (1.5 normal length)
-        for( var i = 0; i< Math.floor(SAMPLES_PER_BIT * 1.5); i++){
+    function stopBit(){
+        for( var i = 0; i< Math.ceil(SAMPLES_PER_BIT * 1.5); i++){
             //set 32bit float
-            var sample = 128 + 127 * Math.sin((2 * Math.PI) * (i / SAMPLE_RATE) * SPACE);
+            var sample = 128 + 127 * Math.sin((2 * Math.PI) * (bufferTime/ SAMPLE_RATE) * SPACE);
             channel[bufferTime] = sample
             wave_data += chr8(sample)
             bufferTime++
         }
+    }
+    function startBit(){
+        writeBit(MARK)
+    }
+
+    //some carrier love
+    for( var i = 0; i< carrierStart; i++){
+        //set 32bit float
+        var sample = 128 + 127 * Math.sin((2 * Math.PI) * (i / SAMPLE_RATE) * SPACE);
+
+        wave_data += chr8(sample)
+        channel[bufferTime] = sample
+        bufferTime++
+    }
+
+    console.log(seqs)
+    seqs.forEach(function(bit){
+
+        //start bit
+        startBit()
+        bit.forEach(function(freq){
+            writeBit(freq)
+        })
+        //stop bit (1.5 normal length)
+        stopBit()
     })
 
+    //some trailing carrier love
+    for( var i = 0; i< carrierEnding; i++){
+        //set 32bit float
+        var sample = 128 + 127 * Math.sin((2 * Math.PI) * (bufferTime / SAMPLE_RATE) * SPACE);
 
-    var song = outputContext.createBufferSource()
-    song.buffer = outputBuffer
-    song.connect(outputContext.destination)
-    song.start()
+        wave_data += chr8(sample)
+        channel[bufferTime] = sample
+        bufferTime++
+    }
+
+
+    //var song = outputContext.createBufferSource()
+    //song.buffer = outputBuffer
+    //song.connect(outputContext.destination)
+    //song.start()
 
     dataURI = "data:audio/wav;base64," + escape(btoa(wave_data))
-
-    //window.open(dataURI)
+    window.open(dataURI)
 }
 
 document.getElementById("the_button").addEventListener("click", function(event){
